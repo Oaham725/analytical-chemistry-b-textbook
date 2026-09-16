@@ -1,0 +1,1 @@
+{"name":"analytical-chemistry-b-textbook","private":true,"type":"module","engines":{"node":">=20"},"scripts":{"build":"node build.mjs","check":"python3 validate.py"},"devDependencies":{"marked":"17.0.5"}}
