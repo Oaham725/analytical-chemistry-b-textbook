@@ -3,7 +3,8 @@ from pathlib import Path
 from html.parser import HTMLParser
 from urllib.parse import urlsplit, unquote
 from decimal import Decimal, ROUND_HALF_EVEN
-from math import sqrt, isclose
+from math import sqrt, isclose, gamma, pi, atan, sin, cos
+from statistics import mean as average, stdev
 import re
 
 class Page(HTMLParser):
@@ -20,6 +21,14 @@ class Page(HTMLParser):
     def handle_data(self,data): self.text.append(data)
 
 root=Path(__file__).parent
+for manuscript in (root/'manuscript').glob('*.md'):
+    expected=None
+    for number,line in enumerate(manuscript.read_text().splitlines(),1):
+        if line.startswith('|'):
+            columns=len(re.split(r'(?<!\\)\|',line))
+            if expected is None: expected=columns
+            assert columns==expected, ('unescaped table separator',manuscript.name,number)
+        else: expected=None
 pages={p.name:Page(p.read_text()) for p in (root/'docs').glob('*.html')}
 assert set(pages)=={'index.html','chapter2.html','extension.html','references.html'}
 for name,page in pages.items():
@@ -62,3 +71,55 @@ assert isclose(sxx,820) and isclose(sxy,4.176)
 assert round(r2,4)==.9823 and round(q,2)==8.30
 assert [round(p,4) for p in pred]==[.0563,.0818,.1327,.1836,.2346]
 print('Numeric checks passed:',{'mean':mean,'SD':sd,'SE':se,'slope':b,'intercept':intercept,'R2':r2,'unknown_mg_L':cu,'sample_mg_g':q})
+
+# Independent distribution calculation (integer degrees of freedom), no SciPy needed.
+def t_cdf(t, df):
+    theta=atan(t/sqrt(df))
+    integrals=[theta,sin(theta)]
+    for k in range(2,df):
+        integrals.append(sin(theta)*cos(theta)**(k-1)/k+(k-1)/k*integrals[k-2])
+    return .5+gamma((df+1)/2)/(sqrt(pi)*gamma(df/2))*integrals[df-1]
+
+def t_quantile(p,df):
+    lo,hi=0.,1000.
+    for _ in range(70):
+        mid=(lo+hi)/2
+        if t_cdf(mid,df)<p: lo=mid
+        else: hi=mid
+    return (lo+hi)/2
+
+for df,expected in [(2,4.303),(3,3.182),(4,2.776),(5,2.571),(8,2.306),(9,2.262)]:
+    assert round(t_quantile(.975,df),3)==expected
+t_for_g=t_quantile(1-.05/(2*5),3)
+gcrit=4/sqrt(5)*sqrt(t_for_g**2/(3+t_for_g**2))
+assert round(gcrit,3)==1.715
+outliers=[9.96,10.00,10.02,10.04,10.48]
+g=(max(outliers)-average(outliers))/stdev(outliers)
+assert round(g,3)==1.772 and g>gcrit
+assert round((10.48-10.04)/(10.48-9.96),3)==.846
+one=[10.10,10.12,10.08,10.15,10.05]
+t_one=(average(one)-10)*sqrt(5)/stdev(one)
+assert round(t_one,3)==5.872
+assert round(t_quantile(.975,4)*stdev(one)/sqrt(5),2)==.05
+group_a=[4.8,5.0,5.2,5.1,4.9]; group_b=[5.1,5.3,5.2,5.4,5.0]
+sp=sqrt((4*stdev(group_a)**2+4*stdev(group_b)**2)/8)
+delta=average(group_b)-average(group_a); se_delta=sp*sqrt(2/5)
+assert isclose(delta/se_delta,2)
+half=t_quantile(.975,8)*se_delta
+assert round(delta-half,2)==-.03 and round(delta+half,2)==.43
+diffs=[.10,.20,.10,.30,.30]
+assert round(average(diffs)*sqrt(5)/stdev(diffs),3)==4.472
+c2=[0,2,4,6,8]; y2=[.010,.052,.089,.132,.169]
+scc=sum((v-average(c2))**2 for v in c2)
+scy=sum((v-average(c2))*(w-average(y2)) for v,w in zip(c2,y2))
+slope=scy/scc; intercept2=average(y2)-slope*average(c2)
+res=[w-intercept2-slope*v for v,w in zip(c2,y2)]
+sse=sum(v*v for v in res)
+r_squared=1-sse/sum((v-average(y2))**2 for v in y2)
+assert isclose(slope,.0199) and isclose(intercept2,.0108)
+assert [round(v,4) for v in res]==[-.0008,.0014,-.0014,.0018,-.0010]
+assert isclose(sse,8.8e-6) and round(sqrt(sse/3),5)==.00171
+assert round(r_squared,6)==.999445 and round((.110-intercept2)/slope,2)==4.98
+assert isclose((1.27-.8)/.5*100,94) and isclose((.58-.4)/.2*100,90)
+assert isclose(.00005*1e6,50)
+print('2026-09-18 additions verified: t quantiles, two-sided Grubbs, Q, mean tests, paired differences, regression and recovery.')
